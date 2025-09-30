@@ -9,7 +9,9 @@ on:
     types: [published]
 
 jobs:
+  # Multi-OS testing and validation
   test:
+    name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -19,7 +21,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup .NET
+    - name: Setup .NET ${{ matrix.dotnet-version }}
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ matrix.dotnet-version }}
@@ -27,7 +29,7 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
 
-    - name: Build
+    - name: Build solution
       run: dotnet build --no-restore --configuration Release
 
     - name: Run tests
@@ -46,7 +48,9 @@ jobs:
         flags: unittests
         name: codecov-umbrella
 
-  build-and-pack:
+  # Package creation and validation (only on main branch pushes)
+  package:
+    name: Create NuGet Package
     needs: test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -54,7 +58,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup .NET
+    - name: Setup .NET 9.0.x
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
@@ -62,29 +66,33 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
 
-    - name: Build
+    - name: Build solution
       run: dotnet build --configuration Release --no-restore
 
-    - name: Pack NuGet package
+    - name: Run tests (package validation)
+      run: dotnet test --configuration Release --no-build
+
+    - name: Create NuGet package
       run: dotnet pack --configuration Release --no-build --output nupkgs
 
-    - name: Upload NuGet package
+    - name: Upload package artifact
       uses: actions/upload-artifact@v4
       with:
-        name: nupkg
+        name: nupkg-${{ github.run_number }}
         path: nupkgs/
         retention-days: 30
 
-
-  performance-benchmark:
-    needs: test
+  # Publish to NuGet (only on release)
+  publish:
+    name: Publish to NuGet
+    needs: package
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'release' && github.event.action == 'published'
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup .NET
+    - name: Setup .NET 9.0.x
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
@@ -92,16 +100,65 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
 
-    - name: Build
+    - name: Build solution
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Run tests (pre-publish validation)
+      run: dotnet test --configuration Release --no-build
+
+    - name: Create NuGet package
+      run: dotnet pack --configuration Release --no-build --output nupkgs
+
+    - name: Publish to NuGet
+      run: |
+        cd nupkgs
+        for package in *.nupkg; do
+          if [[ $package != *.symbols.nupkg ]]; then
+            echo "Publishing $package to NuGet..."
+            dotnet nuget push "$package" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+          fi
+        done
+
+    - name: Comment on release
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.payload.release.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '✅ **ZiggyMath ${{ github.event.release.tag_name }}** has been successfully published to NuGet!\n\n📦 **Installation:**\n```bash\ndotnet add package ZiggyMath\n```\n\n🔗 **Package:** https://www.nuget.org/packages/ZiggyMath/${{ github.event.release.tag_name }}'
+          })
+
+  # Performance benchmarks (only on main branch pushes)
+  benchmark:
+    name: Performance Benchmarks
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 9.0.x
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build solution
       run: dotnet build --configuration Release --no-restore
 
     - name: Run performance benchmarks
       run: |
         echo "Performance benchmarks would run here"
         echo "This would include timing tests for key algorithms"
+        echo "Matrix operations, FFT performance, statistical computations"
 
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
       with:
-        name: benchmark-results
+        name: benchmark-results-${{ github.run_number }}
         path: benchmark-results/
