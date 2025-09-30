@@ -79,6 +79,7 @@ Perfect for scientific computing, data analysis, machine learning, and real-time
 
     <!-- Development Dependencies (not included in package) -->
     <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.abstractions" Version="2.0.3" />
   </ItemGroup>
 
   <!-- Package Files -->
